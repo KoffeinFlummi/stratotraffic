@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+
+"""
+stratotraffic
+
+Usage:
+  stratotraffic status
+  stratotraffic unlock
+  stratotraffic (-h | --help)
+  stratotraffic (-v | --version)
+
+Commands:
+  status  Show traffic status
+  unlock  Unlock traffic
+
+Options:
+  -h --help     Show this help and exit
+  -v --version  Show version information and exit
+"""
+
+import os
+import re
+import imp
+import sys
+import glob
+import shutil
+import random
+import subprocess as sp
+
+import docopt
+import requests
+from PIL import Image
+
+
+VERSION = "v1.0"
+
+HOMECONFIG = "~/.config/stratotraffic/config"
+CONFIG = "/etc/stratotraffic.conf"
+
+URL = "https://config.stratoserver.net/index.php"
+USERAGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.106 Safari/537.36"
+ATTEMPTS = 5
+
+
+def load_config(path):
+    """ Load config values from the given config file. """
+    try:
+        assert os.path.exists(os.path.expanduser(path))
+        with open(os.path.expanduser(path)) as f:
+            global config
+            config = imp.load_source("data", "", f)
+        assert config.domain
+        assert config.password
+
+    except NameError:
+        return False
+
+    except AssertionError:
+        return False
+
+    return True
+
+
+def solve_captcha(path):
+    """ Return the text contained in the image at the given path. """
+
+    # Load image and convert to greyscale
+    img = Image.open(path)
+    img = img.convert("LA")
+
+    # Remove grid
+    pixels = img.load()
+    vert = [i for i in range(img.size[0]) if pixels[i,0][0] < 150]
+    hori = [i for i in range(img.size[1]) if pixels[0,i][0] < 150]
+    for x in range(img.size[0]):
+        for y in range(img.size[1]):
+            if x not in vert and y not in hori:
+                continue
+            if pixels[x,y][0] < 95:
+                continue
+            pixels[x,y] = (230, 255)
+
+    # Run through tesseract
+    img = img.convert("RGB")
+    img.save("/tmp/stratotemp.jpg")
+    open("/tmp/stratotess.txt", "w").close()
+    sp.call(["tesseract", "/tmp/stratotemp.jpg", "/tmp/stratotess", "-psm", "8"],
+        stdout=open(os.devnull, "w"), stderr=open(os.devnull, "w"))
+
+    with open("/tmp/stratotess.txt", "r") as f:
+        return f.read().replace("\n", "")
+
+
+def main(args):
+    """ Main function. """
+
+    # Load login data from config
+    if not load_config(HOMECONFIG):
+        if not load_config(CONFIG):
+            print("Failed to retrieve login info.", file=sys.stderr)
+            return 1
+
+    h = {"User-Agent": USERAGENT}
+
+    with requests.Session() as session:
+        print("Preparing ...")
+        r = session.get(URL, headers=h)
+        form = re.search("<form action=\"index.php\" method=\"post\" name=\"main\">(.*?)</form>", r.text, re.S).group(1)
+        s = re.search("<input type=\"hidden\" name=\"S\" value=\"(.*?)\">", form).group(1)
+        param = re.search("<input type=\"hidden\" name=\"param\" value=\"(.*?)\">", form).group(1)
+        payload = {
+            "S": s,
+            "param": param,
+            "domainname": config.domain,
+            "pass": config.password,
+            "button[login]": ""
+        }
+
+        print("Logging in ...")
+        r = session.post(URL, headers=h, data=payload)
+        m = re.search("<a href=\"index.php\?param=([^\"]*?)&amp;S=([^\"]*?)\" data-slot=\"traffic\"  data-event=\"next_traffic\"", r.text)
+        param = m.group(1)
+        s = m.group(2)
+
+        print("Getting traffic stats ...\n")
+        r = session.get(URL, headers=h, params={"param": param, "S": s})
+        confirmation_needed = re.search("Confirmation required as from", r.text) is not None
+
+        if args["status"]:
+            current = re.search("Currently used : ([.\d]*?) GByte<br />", r.text).group(1)
+            if confirmation_needed:
+                free_until = re.search("Confirmation required as from : : ([.\d]*?) GByte", r.text).group(1)
+                print("Confirmation needed.\n")
+            else:
+                free_until = re.search("Your confirmation is neccessary starting with ([.\d]*?) GByte\.", r.text).group(1)
+                print("Currently no confimation needed.\n")
+            p = float(current) / float(free_until)
+            w = shutil.get_terminal_size().columns - 9
+            print("Current Traffic: {}/{} GB".format(current, free_until))
+            print(" {:>3}% [{}{}] ".format(int(p*100), int(p*w) * "#", (w - int(p*w)) * "-"))
+
+        if args["unlock"]:
+            if not confirmation_needed:
+                print("Not needed.", file=sys.stderr)
+                return 1
+
+            for i in range(ATTEMPTS):
+                print("Attempt {} of {} ... ".format(i+1, ATTEMPTS), end="")
+                form = re.search("<form action=\"index.php\" method=\"post\">(.*?)</form>", r.text, re.S).group(1)
+                s = re.search("<input type=\"hidden\" name=\"S\" value=\"(.*?)\">", form).group(1)
+                param = re.search("<input type=\"hidden\" name=\"param\" value=\"(.*?)\">", form).group(1)
+                button = re.search("<button dojoType=\"dijit.form.Button\" id=\".*?\" baseClass=\"orange_button\" iconClass=\"spacer\" label=\".*?\"  name=\"(.*?)\" type=\"submit\" >", form).group(1)
+                img = re.search("<img src=\"(.*?)\"", form).group(1)
+                img = URL.replace("index.php", img)
+
+                r = session.get(img, headers=h)
+                with open("/tmp/stratotemp.jpg", "wb") as f:
+                    f.write(r.content)
+
+                code = solve_captcha("/tmp/stratotemp.jpg")
+                print("guessing {} ... ".format(code), end="")
+
+                payload = {
+                    "S": s,
+                    "param": param,
+                    "code": code,
+                    button: ""
+                }
+
+                r = session.post(URL, headers=h, data=payload)
+
+                if re.search("<div class=\"boxes boxes-error\">", r.text) is None:
+                    print("SUCCESS.")
+                    break
+                else:
+                    print("FAILED.")
+                    m = re.search("<a href=\"index.php\?param=([^\"]*?)&amp;S=([^\"]*?)\" data-slot=\"traffic\"  data-event=\"next_traffic\"", r.text)
+                    param = m.group(1)
+                    s = m.group(2)
+                    r = session.get(URL, headers=h, params={"param": param, "S": s})
+            else:
+                print("\nFailed to unlock traffic.", file=sys.stderr)
+                return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    args = docopt.docopt(__doc__, version=VERSION)
+    sys.exit(main(args))
