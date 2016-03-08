@@ -124,15 +124,15 @@ def main(args):
 
         print("Getting traffic stats ...\n")
         r = session.get(URL, headers=h, params={"param": param, "S": s})
-        confirmation_needed = re.search("Confirmation required as from", r.text) is not None
+        confirmation_needed = re.search("Confirmation required as of", r.text) is not None
 
         if args["status"]:
-            current = re.search("Currently used : ([.\d]*?) GByte<br />", r.text).group(1)
+            current = re.search("Currently Used : ([.\d]*?) GByte<br />", r.text).group(1)
             if confirmation_needed:
-                free_until = re.search("Confirmation required as from : : ([.\d]*?) GByte", r.text).group(1)
+                free_until = re.search("Confirmation required as of: : ([.\d]*?) GByte", r.text).group(1)
                 print("Confirmation needed.\n")
             else:
-                free_until = re.search("Your confirmation is neccessary starting with ([.\d]*?) GByte\.", r.text).group(1)
+                free_until = 1000 if float(current) < 1000 else 1000 + ((float(current) - 1000) // 300 + 1) * 300
                 print("Currently no confimation needed.\n")
             p = float(current) / float(free_until)
             w = shutil.get_terminal_size().columns - 9
