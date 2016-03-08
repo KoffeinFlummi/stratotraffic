@@ -32,3 +32,8 @@ Options:
   -h --help     Show this help and exit
   -v --version  Show version information and exit
 ```
+
+
+### Disclaimer
+
+This project includes code to circumvent Strato's captchas. Please don't use it for any malicious purposes. Also, if you're a Strato employee reading this, please know that the reason why I created this is because there's no easy way to set a custom confirmation limit for traffic or an API for unlocking it. (hinthint)
