@@ -137,7 +137,7 @@ def main(args):
             p = float(current) / float(free_until)
             w = shutil.get_terminal_size().columns - 9
             print("Current Traffic: {}/{} GB".format(current, free_until))
-            print(" {:>3}% [{}{}] ".format(int(p*100), int(p*w) * "#", (w - int(p*w)) * "-"))
+            print(" {:>3}% [{}{}] ".format(int(p*100), int(min(p,1)*w) * "#", (w - int(p*w)) * "-"))
 
         if args["unlock"]:
             if not confirmation_needed:
