@@ -8,6 +8,8 @@ Read/unlock your strato.de server traffic/speed from the command line.
 
 ### Setup
 
+Requires an installation of [tesseract](https://github.com/tesseract-ocr/tesseract) to be installed and in your PATH.
+
 ```
 $ python3 setup.py install
 ```
